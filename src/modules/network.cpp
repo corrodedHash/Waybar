@@ -44,6 +44,7 @@ waybar::modules::Network::readBandwidthUsage() {
 
   unsigned long long receivedBytes = 0ull;
   unsigned long long transmittedBytes = 0ull;
+  bool found = false;
   while (std::getline(netdev, line)) {
     std::istringstream iss(line);
 
@@ -54,6 +55,7 @@ waybar::modules::Network::readBandwidthUsage() {
     if (ifacename != ifname_) {
       continue;
     }
+    found = true;
 
     // The rest of the line consists of whitespace separated counts divided
     // into two groups (receive and transmit). Each group has the following
@@ -81,6 +83,12 @@ waybar::modules::Network::readBandwidthUsage() {
 
     receivedBytes += r;
     transmittedBytes += t;
+  }
+
+  if (!found) {
+    // The interface is not in /proc/net/dev (yet): report "no reading"
+    // instead of zero, so the caller keeps its previous baseline.
+    return std::nullopt;
   }
 
   return {{receivedBytes, transmittedBytes}};
@@ -381,22 +389,29 @@ auto waybar::modules::Network::update() -> void {
     if (elapsed_seconds <= 0.0) {
       elapsed_seconds = std::chrono::duration<double>(interval_).count();
     }
-    bandwidth_last_sample_time_ = now;
-
     auto bandwidth = readBandwidthUsage();
     if (bandwidth.has_value()) {
       auto down_octets = bandwidth->first;
       auto up_octets = bandwidth->second;
 
-      bandwidth_down = down_octets - bandwidth_down_total_;
+      // A counter that went backwards means the interface was re-created or
+      // its driver reset it. Report no traffic for this sample and start over
+      // from the new value instead of wrapping the unsigned subtraction.
+      bandwidth_down = bandwidth_sampled_ && down_octets >= bandwidth_down_total_
+                           ? down_octets - bandwidth_down_total_
+                           : 0;
       bandwidth_down_total_ = down_octets;
 
-      bandwidth_up = up_octets - bandwidth_up_total_;
+      bandwidth_up = bandwidth_sampled_ && up_octets >= bandwidth_up_total_
+                         ? up_octets - bandwidth_up_total_
+                         : 0;
       bandwidth_up_total_ = up_octets;
+      bandwidth_sampled_ = true;
 
       bandwidth_down_prev_ = bandwidth_down;
       bandwidth_up_prev_ = bandwidth_up;
       bandwidth_sample_seconds_ = elapsed_seconds;
+      bandwidth_last_sample_time_ = now;
     }
   } else {
     bandwidth_down = bandwidth_down_prev_;

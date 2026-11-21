@@ -75,6 +75,7 @@ class Network : public ALabel {
 
   unsigned long long bandwidth_down_total_{0};
   unsigned long long bandwidth_up_total_{0};
+  bool bandwidth_sampled_{false};
   unsigned long long bandwidth_down_prev_{0};
   unsigned long long bandwidth_up_prev_{0};
   double bandwidth_sample_seconds_{1.0};
