@@ -394,24 +394,38 @@ auto waybar::modules::Network::update() -> void {
       auto down_octets = bandwidth->first;
       auto up_octets = bandwidth->second;
 
-      // A counter that went backwards means the interface was re-created or
-      // its driver reset it. Report no traffic for this sample and start over
-      // from the new value instead of wrapping the unsigned subtraction.
-      bandwidth_down = bandwidth_sampled_ && down_octets >= bandwidth_down_total_
+      // The stored counters only belong to the interface they were read from.
+      // After a switch (e.g. the default route moved to another interface) or
+      // a netdev re-creation the new counters are unrelated, so start over
+      // instead of subtracting them.
+      const bool same_interface = bandwidth_sampled_ && bandwidth_ifname_ == ifname_;
+
+      // A counter that went backwards despite the same interface (driver
+      // statistics reset, 32-bit counter wrap) must not wrap the unsigned
+      // subtraction either.
+      bandwidth_down = same_interface && down_octets >= bandwidth_down_total_
                            ? down_octets - bandwidth_down_total_
                            : 0;
       bandwidth_down_total_ = down_octets;
 
-      bandwidth_up = bandwidth_sampled_ && up_octets >= bandwidth_up_total_
-                         ? up_octets - bandwidth_up_total_
-                         : 0;
+      bandwidth_up =
+          same_interface && up_octets >= bandwidth_up_total_ ? up_octets - bandwidth_up_total_ : 0;
       bandwidth_up_total_ = up_octets;
       bandwidth_sampled_ = true;
+      bandwidth_ifname_ = ifname_;
 
       bandwidth_down_prev_ = bandwidth_down;
       bandwidth_up_prev_ = bandwidth_up;
       bandwidth_sample_seconds_ = elapsed_seconds;
       bandwidth_last_sample_time_ = now;
+    } else {
+      // No reading for this sample (the interface is absent from
+      // /proc/net/dev). Keep showing the last computed rate rather than
+      // dropping to zero for a tick; the next successful read is averaged
+      // over the whole gap via bandwidth_last_sample_time_.
+      bandwidth_down = bandwidth_down_prev_;
+      bandwidth_up = bandwidth_up_prev_;
+      elapsed_seconds = bandwidth_sample_seconds_;
     }
   } else {
     bandwidth_down = bandwidth_down_prev_;
